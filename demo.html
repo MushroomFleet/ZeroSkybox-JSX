@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>ZeroSkybox — Procedural Deterministic Sky</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Segoe UI',system-ui,sans-serif;color:#e0e0e0}
+#c{position:fixed;inset:0;width:100%!important;height:100%!important;display:block}
+
+/* SVG overlay — sun, moon, stars live here in screen space */
+#sky-svg{
+  position:fixed;inset:0;width:100%;height:100%;
+  pointer-events:none;z-index:2;overflow:hidden;
+}
+
+/* HUD */
+#hud{
+  position:fixed;top:0;left:0;right:0;z-index:20;
+  padding:10px 18px;
+  background:linear-gradient(180deg,rgba(0,0,0,.65) 0%,transparent 100%);
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;pointer-events:none;
+}
+#hud h1{font-size:.9rem;font-weight:700;letter-spacing:.08em;color:#aee8ff;text-transform:uppercase}
+.tag{font-size:.65rem;background:rgba(130,200,255,.1);border:1px solid rgba(130,200,255,.25);
+     border-radius:4px;padding:2px 6px;color:#9dd6ff}
+
+/* Info box */
+#info{
+  position:fixed;top:50px;right:16px;z-index:20;
+  background:rgba(0,0,8,.78);border:1px solid rgba(100,180,255,.2);
+  border-radius:8px;padding:10px 14px;font-size:.7rem;line-height:1.9;color:#aac8e0;
+  min-width:190px;pointer-events:none;
+}
+#info .sh{color:#4ac8f0;font-size:.62rem;text-transform:uppercase;letter-spacing:.08em;margin-top:4px}
+#info span{color:#ddf0ff;font-weight:600}
+
+/* Seed panel */
+#seeds{
+  position:fixed;top:50px;left:16px;z-index:20;
+  background:rgba(0,0,8,.78);border:1px solid rgba(100,180,255,.2);
+  border-radius:8px;padding:10px 14px;font-size:.7rem;line-height:2;color:#aac8e0;min-width:175px;
+}
+#seeds label{display:block;font-size:.62rem;text-transform:uppercase;color:#7ab8d4}
+#seeds input[type=number]{
+  background:rgba(255,255,255,.06);border:1px solid rgba(100,180,255,.25);
+  color:#ddf0ff;border-radius:4px;padding:2px 7px;width:100%;font-size:.78rem
+}
+#seeds input:focus{outline:1px solid #4ac8f0}
+
+/* Controls */
+#ctrl{
+  position:fixed;bottom:0;left:0;right:0;z-index:20;
+  padding:12px 20px 16px;
+  background:linear-gradient(0deg,rgba(0,0,0,.8) 0%,transparent 100%);
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px 28px;
+}
+.cg label{display:block;font-size:.65rem;text-transform:uppercase;letter-spacing:.06em;color:#7ab8d4;margin-bottom:3px}
+.cg .val{float:right;color:#c8e8ff;font-size:.65rem}
+.cg input[type=range]{width:100%;accent-color:#4ac8f0;cursor:pointer}
+.row{display:flex;gap:6px;flex-wrap:wrap;margin-top:3px}
+button{
+  background:rgba(74,200,240,.12);border:1px solid rgba(74,200,240,.35);
+  color:#9de4ff;border-radius:5px;padding:4px 11px;font-size:.7rem;
+  cursor:pointer;transition:background .15s;letter-spacing:.04em
+}
+button:hover{background:rgba(74,200,240,.28)}
+button.on{background:rgba(74,200,240,.32);border-color:#4ac8f0;color:#fff}
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<!-- SVG overlay: sun, moon, stars rendered as SVG elements at projected screen positions -->
+<svg id="sky-svg" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="sun-grad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#fff8e0" stop-opacity="1"/>
+      <stop offset="40%"  stop-color="#ffe080" stop-opacity="1"/>
+      <stop offset="70%"  stop-color="#ff9a20" stop-opacity=".6"/>
+      <stop offset="100%" stop-color="#ff6000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="moon-grad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#e8eeff" stop-opacity="1"/>
+      <stop offset="60%"  stop-color="#c0ccee" stop-opacity="1"/>
+      <stop offset="85%"  stop-color="#8899cc" stop-opacity=".4"/>
+      <stop offset="100%" stop-color="#8899cc" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="moon-clip">
+      <circle id="moon-clip-circle" r="22" cx="0" cy="0"/>
+    </clipPath>
+    <filter id="star-glow" x="-200%" y="-200%" width="500%" height="500%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1.4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g id="stars-layer"></g>
+  <g id="moon-group" opacity="0">
+    <circle id="moon-halo" r="48" cx="0" cy="0" fill="url(#moon-grad)" opacity=".35"/>
+    <g clip-path="url(#moon-clip)">
+      <circle id="moon-disc" r="22" cx="0" cy="0" fill="#d0daff"/>
+      <ellipse id="moon-shadow" rx="22" ry="22" cx="0" cy="0" fill="#080c1a"/>
+    </g>
+  </g>
+  <g id="sun-group" opacity="0">
+    <circle id="sun-corona" r="80" cx="0" cy="0" fill="url(#sun-grad)" opacity=".5"/>
+    <circle id="sun-mid"    r="44" cx="0" cy="0" fill="url(#sun-grad)" opacity=".7"/>
+    <circle id="sun-disc"   r="22" cx="0" cy="0" fill="#fff8d0"/>
+    <circle id="sun-core"   r="10" cx="0" cy="0" fill="#ffffff"/>
+  </g>
+</svg>
+
+<div id="hud">
+  <h1>ZeroSkybox</h1>
+  <span class="tag">ZeroBytes</span>
+  <span class="tag">Zero-Temporal</span>
+  <span class="tag">O(1)/epoch</span>
+  <span class="tag">Canvas sky dome</span>
+  <span class="tag">SVG celestials</span>
+</div>
+
+<div id="info">
+  <div class="sh">Sky State</div>
+  Time: <span id="i-time">—</span><br/>
+  Season: <span id="i-season">—</span><br/>
+  Sun elev: <span id="i-sun">—</span><br/>
+  Moon: <span id="i-moon">—</span><br/>
+  Cloud: <span id="i-cloud">—</span><br/>
+  Storm: <span id="i-storm">—</span><br/>
+  <div class="sh">Epoch</div>
+  Tick: <span id="i-epoch">—</span><br/>
+  Speed: <span id="i-speed">—</span>×
+</div>
+
+<div id="seeds">
+  <label>World Seed</label>
+  <input type="number" id="inp-seed" value="1337" min="0" max="999999"/>
+  <label style="margin-top:4px">Region X</label>
+  <input type="number" id="inp-rx" value="0" min="-100" max="100"/>
+  <label>Region Y</label>
+  <input type="number" id="inp-ry" value="0" min="-100" max="100"/>
+</div>
+
+<div id="ctrl">
+  <div class="cg">
+    <label>Epoch <span class="val" id="v-ep">0</span></label>
+    <input type="range" id="sl-epoch" min="0" max="87600" value="60" step="1"/>
+  </div>
+  <div class="cg">
+    <label>Speed <span class="val" id="v-sp">60</span>×/s</label>
+    <input type="range" id="sl-speed" min="0" max="2000" value="60" step="1"/>
+  </div>
+  <div class="cg">
+    <label>Ticks/Day <span class="val" id="v-tpd">240</span></label>
+    <input type="range" id="sl-tpd" min="24" max="1440" value="240" step="24"/>
+  </div>
+  <div class="cg">
+    <label>Jump to…</label>
+    <div class="row">
+      <button id="b-dawn">Dawn</button>
+      <button id="b-noon">Noon</button>
+      <button id="b-dusk">Dusk</button>
+      <button id="b-night">Midnight</button>
+    </div>
+  </div>
+  <div class="cg">
+    <label>Playback</label>
+    <div class="row">
+      <button id="b-play" class="on">▶ Play</button>
+      <button id="b-pause">⏸ Pause</button>
+      <button id="b-rev">◀◀ Rev</button>
+    </div>
+  </div>
+  <div class="cg">
+    <label>Camera</label>
+    <div class="row">
+      <button id="b-orbit" class="on">Orbit</button>
+      <button id="b-scan">Sky Scan</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ZEROBYTES / ZERO-TEMPORAL  —  pure JS hash kernel
+// ═══════════════════════════════════════════════════════════════════════════
+function wang(n){
+  n=((n^61)^(n>>>16))>>>0;
+  n=((n+(n<<3))>>>0);
+  n=((n^(n>>>4))>>>0);
+  n=(Math.imul(n,0x27d4eb2d)>>>0);
+  n=((n^(n>>>15))>>>0);
+  return n>>>0;
+}
+function posHash(x,y,z,s){
+  s=s||0;
+  let h=wang((x&0x7fffffff)>>>0);
+  h=wang((h^((y&0x7fffffff)>>>0))>>>0);
+  h=wang((h^((z&0x7fffffff)>>>0))>>>0);
+  h=wang((h^((s&0x7fffffff)>>>0))>>>0);
+  return h>>>0;
+}
+function tempHash(x,y,z,ep,s){
+  let h=posHash(x,y,z,s||0);
+  h=wang((h^((Math.abs(ep)&0x7fffffff)>>>0))>>>0);
+  return h>>>0;
+}
+function h2f(h){ return (h>>>0)/0x100000000; }
+
+function coherent(fx,fy,seed,oct){
+  oct=oct||4;
+  let v=0,a=1,f=1,ma=0;
+  for(let i=0;i<oct;i++){
+    const x0=Math.floor(fx*f),y0=Math.floor(fy*f);
+    let sx=(fx*f)-x0; sx=sx*sx*(3-2*sx);
+    let sy=(fy*f)-y0; sy=sy*sy*(3-2*sy);
+    const n00=h2f(posHash(x0,  y0,  0,seed+i))*2-1;
+    const n10=h2f(posHash(x0+1,y0,  0,seed+i))*2-1;
+    const n01=h2f(posHash(x0,  y0+1,0,seed+i))*2-1;
+    const n11=h2f(posHash(x0+1,y0+1,0,seed+i))*2-1;
+    v+=a*((n00*(1-sx)+n10*sx)*(1-sy)+(n01*(1-sx)+n11*sx)*sy);
+    ma+=a; a*=.5; f*=2;
+  }
+  return v/ma;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SKY STATE  —  O(1), deterministic
+// ═══════════════════════════════════════════════════════════════════════════
+function skyState(epoch,seed,rx,ry,tpd,tpy){
+  const ep=Math.floor(epoch);
+  const dayPh  =(ep%tpd)/tpd;
+  const yearPh =(ep%tpy)/tpy;
+  // sunEl: -1=midnight, +1=solar noon  (peaks at dayPh=0.5)
+  const sunEl  = Math.sin((dayPh-0.25)*Math.PI*2);
+  const sunAz  = dayPh*Math.PI*2;
+  const moonEl = Math.sin((dayPh+0.25)*Math.PI*2);
+  const moonAz = (dayPh+0.5)*Math.PI*2;
+  const season = Math.sin(yearPh*Math.PI*2);
+  const dayIdx = Math.floor(ep/tpd);
+  const cloudSeed = tempHash(rx,ry,0,dayIdx,seed+100);
+  const stormSeed = tempHash((rx>>2)|0,(ry>>2)|0,0,Math.floor(dayIdx/7),seed+200);
+  const cdetSeed  = tempHash(rx,ry,1,Math.floor(ep/(tpd/6))|0,seed+300);
+  const moisture  = (coherent(rx*.1,ry*.1,seed+500)+1)*.5;
+  const moonPh    = (ep%(tpd*29))/(tpd*29);
+  return{
+    dayPh,yearPh,season,
+    sunEl,sunAz,moonEl,moonAz,
+    cloudCover:h2f(cloudSeed),
+    cloudOff:h2f(cdetSeed),
+    storm:h2f(stormSeed)>0.85&&moisture>0.4,
+    moonPh,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STAR CATALOGUE  —  ZeroBytes, static per seed
+// ═══════════════════════════════════════════════════════════════════════════
+function buildStars(seed,count){
+  count=count||220;
+  const stars=[];
+  for(let i=0;i<count;i++){
+    const s1=posHash(i,0,0,seed+7777);
+    const s2=posHash(i,1,0,seed+7777);
+    const s3=posHash(i,2,0,seed+7777);
+    const s4=posHash(i,3,0,seed+7777);
+    // azimuth: full circle; elevation: 0..1 (0=horizon, 1=zenith)
+    const azimuth   = h2f(s1)*Math.PI*2;
+    const elevation = h2f(s2);          // [0,1] → will map to elev angle
+    const bright    = 0.4+h2f(s3)*0.6;
+    const blue      = h2f(s4)>0.5;
+    stars.push({azimuth,elevation,bright,blue});
+  }
+  return stars;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CANVAS SKY TEXTURE
+// ═══════════════════════════════════════════════════════════════════════════
+const SKY_W=512, SKY_H=512;
+const skyCanvas=document.createElement('canvas');
+skyCanvas.width=SKY_W; skyCanvas.height=SKY_H;
+const skyCtx=skyCanvas.getContext('2d');
+
+function clamp(v,lo,hi){ return v<lo?lo:v>hi?hi:v; }
+function lerp(a,b,t){ return a+(b-a)*t; }
+function lerp3(a,b,t){ return [lerp(a[0],b[0],t),lerp(a[1],b[1],t),lerp(a[2],b[2],t)]; }
+
+function drawSkyTexture(ss){
+  const{sunEl,season,cloudCover,cloudOff,storm}=ss;
+  const t=clamp((sunEl+1)/2,0,1);
+  // twilight spike near horizon crossing
+  const twil=Math.max(0,1-Math.abs(sunEl)*5);
+
+  // Colour stops: [zenith, upper, horizon, subhorizon] as [r,g,b]
+  const night  =[[3,4,18],[5,7,28],[10,14,36],[2,3,10]];
+  const day    =[[28,95,215],[70,155,240],[155,205,255],[38,55,75]];
+  const twi    =[[35,18,75],[130,55,28],[250,115,35],[55,28,8]];
+
+  function lerpPal(pa,pb,t){ return pa.map(function(_,i){ return lerp3(pa[i],pb[i],t); }); }
+
+  let pal=lerpPal(night,day,t);
+  pal=pal.map(function(c,i){ return lerp3(c,twi[i],twil*0.95); });
+
+  if(storm){
+    pal=pal.map(function(c){
+      const avg=(c[0]+c[1]+c[2])/3;
+      return [avg*.5+c[0]*.2,avg*.5+c[1]*.2,avg*.5+c[2]*.2];
+    });
+  }
+
+  // cloud grey-out
+  const gc=cloudCover*0.3;
+  pal=pal.map(function(c){
+    const avg=(c[0]+c[1]+c[2])/3;
+    return [c[0]*(1-gc)+avg*gc,c[1]*(1-gc)+avg*gc,c[2]*(1-gc)+avg*gc];
+  });
+
+  // seasonal warmth
+  const ws=season*10;
+  pal=pal.map(function(c){ return [c[0]+ws,c[1]+ws*.25,c[2]-ws*.4]; });
+
+  // clamp & to css
+  const css=pal.map(function(c){
+    return 'rgb('+c.map(function(v){ return clamp(Math.round(v),0,255); }).join(',')+')';
+  });
+
+  const grad=skyCtx.createLinearGradient(0,0,0,SKY_H);
+  grad.addColorStop(0,   css[0]);
+  grad.addColorStop(0.32,css[1]);
+  grad.addColorStop(0.70,css[2]);
+  grad.addColorStop(1,   css[3]);
+  skyCtx.fillStyle=grad;
+  skyCtx.fillRect(0,0,SKY_W,SKY_H);
+
+  // Cloud blobs — deterministic offset from ZeroTemporal cloudOff
+  if(cloudCover>0.06) drawClouds(ss,t,storm);
+}
+
+function drawClouds(ss,dayT,storm){
+  const{cloudCover,cloudOff}=ss;
+  const cr=storm?110:Math.round(195+dayT*60);
+  const cg=storm?115:Math.round(200+dayT*55);
+  const cb=storm?135:Math.round(215+dayT*40);
+  const baseA=cloudCover*(storm?0.88:0.60);
+  const dx=cloudOff*SKY_W;
+
+  const defs=[
+    {ox:.12,oy:.20,rx:210,ry:42},
+    {ox:.48,oy:.15,rx:240,ry:48},
+    {ox:.76,oy:.26,rx:170,ry:34},
+    {ox:.32,oy:.30,rx:140,ry:30},
+    {ox:.63,oy:.38,rx:190,ry:38},
+    {ox:.90,oy:.18,rx:160,ry:32},
+  ];
+  skyCtx.save();
+  for(const d of defs){
+    const cx=((d.ox*SKY_W+dx)%SKY_W+SKY_W)%SKY_W;
+    const cy=d.oy*SKY_H;
+    const g=skyCtx.createRadialGradient(cx,cy,0,cx,cy,d.rx);
+    g.addColorStop(0,  'rgba('+cr+','+cg+','+cb+','+baseA+')');
+    g.addColorStop(.5, 'rgba('+cr+','+cg+','+cb+','+(baseA*.55)+')');
+    g.addColorStop(1,  'rgba('+cr+','+cg+','+cb+',0)');
+    skyCtx.fillStyle=g;
+    skyCtx.save();
+    skyCtx.scale(1,d.ry/d.rx);
+    skyCtx.beginPath();
+    skyCtx.arc(cx,cy*(d.rx/d.ry),d.rx,0,Math.PI*2);
+    skyCtx.fill();
+    skyCtx.restore();
+  }
+  skyCtx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THREE.JS SETUP
+// ═══════════════════════════════════════════════════════════════════════════
+const canvas3d=document.getElementById('c');
+const renderer=new THREE.WebGLRenderer({canvas:canvas3d,antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;
+renderer.setClearColor(0x000000,1);
+
+const scene =new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.5,30000);
+camera.position.set(0,60,0);
+
+window.addEventListener('resize',function(){
+  renderer.setSize(innerWidth,innerHeight);
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+// Sky dome — hemisphere, texture inside
+const skyTex=new THREE.CanvasTexture(skyCanvas);
+skyTex.flipY=true;
+const domeGeo=new THREE.SphereGeometry(10000,48,24,0,Math.PI*2,0,Math.PI/2+0.3);
+const domeMat=new THREE.MeshBasicMaterial({map:skyTex,side:THREE.BackSide,depthWrite:false,fog:false});
+const dome   =new THREE.Mesh(domeGeo,domeMat);
+dome.renderOrder=-1;
+scene.add(dome);
+
+// Ground
+const gndGeo=new THREE.PlaneGeometry(10000,10000);
+const gndMat=new THREE.MeshLambertMaterial({color:0x1e3018});
+const gnd   =new THREE.Mesh(gndGeo,gndMat);
+gnd.rotation.x=-Math.PI/2;
+gnd.receiveShadow=true;
+scene.add(gnd);
+
+// Pillars
+(function(){
+  const positions=[[-120,-80,180,0x8a9a88],[140,-60,220,0x7a8878],[30,-130,150,0x9aaa98],[-200,50,260,0x6a7868],[90,90,130,0x8a9888]];
+  positions.forEach(function(p){
+    const g=new THREE.CylinderGeometry(8,10,p[2],8);
+    const m=new THREE.MeshLambertMaterial({color:p[3]});
+    const mesh=new THREE.Mesh(g,m);
+    mesh.position.set(p[0],p[2]/2,p[1]);
+    mesh.castShadow=true;
+    scene.add(mesh);
+  });
+})();
+
+// Lights
+const sunLight =new THREE.DirectionalLight(0xfff5d0,1.0);
+sunLight.castShadow=true;
+sunLight.shadow.mapSize.set(1024,1024);
+sunLight.shadow.camera.near=10;
+sunLight.shadow.camera.far=25000;
+sunLight.shadow.camera.left=sunLight.shadow.camera.bottom=-800;
+sunLight.shadow.camera.right=sunLight.shadow.camera.top=800;
+scene.add(sunLight);
+scene.add(sunLight.target);
+
+const moonLight=new THREE.DirectionalLight(0x7788bb,0.0);
+scene.add(moonLight);
+scene.add(moonLight.target);
+
+const ambLight=new THREE.AmbientLight(0x101828,0.4);
+scene.add(ambLight);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DIRECTION VECTOR from azimuth + elevation
+// ═══════════════════════════════════════════════════════════════════════════
+const _v3=new THREE.Vector3();
+function dirFromAzEl(az,el){
+  const cosEl=Math.sqrt(Math.max(0,1-el*el));
+  return new THREE.Vector3(cosEl*Math.sin(az),el,cosEl*Math.cos(az)).normalize();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LIGHTING UPDATE
+// ═══════════════════════════════════════════════════════════════════════════
+function updateLighting(ss){
+  const sd=Math.max(0,ss.sunEl);
+  const sunDir=dirFromAzEl(ss.sunAz,ss.sunEl);
+
+  sunLight.position.copy(sunDir).multiplyScalar(9000);
+  sunLight.target.position.set(0,0,0);
+  sunLight.target.updateMatrixWorld();
+  sunLight.intensity=sd*(ss.storm?0.35:1.0)*(1-ss.cloudCover*.55)*1.5;
+  sunLight.color.setRGB(1.0,0.68+sd*.32,0.35+sd*.6);
+
+  const md=Math.max(0,ss.moonEl);
+  const moonDir=dirFromAzEl(ss.moonAz,ss.moonEl);
+  moonLight.position.copy(moonDir).multiplyScalar(9000);
+  moonLight.target.position.set(0,0,0);
+  moonLight.target.updateMatrixWorld();
+  moonLight.intensity=md*(1-Math.max(0,ss.sunEl)*3)*0.15;
+  moonLight.color.setRGB(0.5,0.55,0.85);
+
+  const dayT=clamp((ss.sunEl+.1)/.4,0,1);
+  ambLight.color.setRGB(.05+dayT*.42,.07+dayT*.46,.14+dayT*.34);
+  ambLight.intensity=0.35+dayT*.65;
+
+  // Ground colour shifts with time of day
+  gndMat.color.setRGB(
+    clamp(.05+dayT*.15,0,1),
+    clamp(.10+dayT*.25,0,1),
+    clamp(.04+dayT*.10,0,1)
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SVG OVERLAY
+// ═══════════════════════════════════════════════════════════════════════════
+const svgEl     =document.getElementById('sky-svg');
+const sunGrp    =document.getElementById('sun-group');
+const moonGrp   =document.getElementById('moon-group');
+const moonDisc  =document.getElementById('moon-disc');
+const moonShadow=document.getElementById('moon-shadow');
+const moonHalo  =document.getElementById('moon-halo');
+const starsLayer=document.getElementById('stars-layer');
+
+let svgW=innerWidth,svgH=innerHeight;
+window.addEventListener('resize',function(){ svgW=innerWidth; svgH=innerHeight; });
+
+const _ndc=new THREE.Vector3();
+function projectDir(dir3,cam){
+  _ndc.copy(dir3).multiplyScalar(6000).add(cam.position);
+  _ndc.project(cam);
+  if(_ndc.z>1.0) return null;
+  return{
+    x:(_ndc.x*.5+.5)*svgW,
+    y:(-_ndc.y*.5+.5)*svgH,
+  };
+}
+
+// Build star SVG elements
+let catalogue=[];
+let starEls=[];
+function rebuildStars(seed){
+  while(starsLayer.firstChild) starsLayer.removeChild(starsLayer.firstChild);
+  starEls=[];
+  catalogue=buildStars(seed,240);
+  for(let i=0;i<catalogue.length;i++){
+    const el=document.createElementNS('http://www.w3.org/2000/svg','circle');
+    el.setAttribute('filter','url(#star-glow)');
+    el.setAttribute('opacity','0');
+    starsLayer.appendChild(el);
+    starEls.push(el);
+  }
+}
+
+function setSVGPos(el,x,y){
+  el.setAttribute('cx',x.toFixed(1));
+  el.setAttribute('cy',y.toFixed(1));
+}
+
+function updateSVGOverlay(ss,cam,nightBlend){
+  const sunDir =dirFromAzEl(ss.sunAz,  ss.sunEl);
+  const moonDir=dirFromAzEl(ss.moonAz, ss.moonEl);
+
+  // ── Sun ──
+  const sp=projectDir(sunDir,cam);
+  if(sp && ss.sunEl>-0.18){
+    const alpha=clamp((ss.sunEl+0.14)/0.22,0,1);
+    sunGrp.setAttribute('opacity',alpha.toFixed(3));
+    sunGrp.setAttribute('transform','translate('+sp.x.toFixed(1)+','+sp.y.toFixed(1)+')');
+    const sunT=clamp(ss.sunEl/.55,0,1);
+    const sg=Math.round(185+sunT*70);
+    const sb=Math.round(70+sunT*185);
+    document.getElementById('sun-disc').setAttribute('fill','rgb(255,'+sg+','+sb+')');
+    document.getElementById('sun-core').setAttribute('fill',sunT>0.5?'#ffffff':'#ffe8c0');
+  } else {
+    sunGrp.setAttribute('opacity','0');
+  }
+
+  // ── Moon ──
+  const mp=projectDir(moonDir,cam);
+  if(mp && ss.moonEl>-0.12){
+    const alpha=clamp((ss.moonEl+0.10)/0.18,0,1)*nightBlend;
+    moonGrp.setAttribute('opacity',alpha.toFixed(3));
+    moonGrp.setAttribute('transform','translate('+mp.x.toFixed(1)+','+mp.y.toFixed(1)+')');
+    // Phase: 0=new(dark), 0.5=full, 1=new again
+    // Shadow ellipse cx shifts to simulate phase
+    const pAngle=ss.moonPh*Math.PI*2;
+    const shCx=(Math.cos(pAngle)*22).toFixed(1);
+    const shRx=Math.max(0,Math.abs(Math.sin(pAngle))*22).toFixed(1);
+    moonShadow.setAttribute('cx',shCx);
+    moonShadow.setAttribute('cy','0');
+    moonShadow.setAttribute('rx',shRx);
+    moonShadow.setAttribute('ry','22');
+  } else {
+    moonGrp.setAttribute('opacity','0');
+  }
+
+  // ── Stars ──
+  for(let i=0;i<catalogue.length;i++){
+    const st=catalogue[i];
+    // elevation [0,1] → actual elevation angle mapped to [0°, 85°]
+    const elevAngle=st.elevation*0.85; // radians, 0=horizon, 0.85~49°
+    const actualEl =Math.sin(elevAngle); // as sin for dirFromAzEl
+    const starDir  =dirFromAzEl(st.azimuth, actualEl);
+    const p=projectDir(starDir,cam);
+    const el=starEls[i];
+    if(!p){ el.setAttribute('opacity','0'); continue; }
+    const starA=st.bright*nightBlend*(actualEl>0?1:Math.max(0,1+actualEl*20));
+    if(starA<0.03){ el.setAttribute('opacity','0'); continue; }
+    el.setAttribute('cx',p.x.toFixed(1));
+    el.setAttribute('cy',p.y.toFixed(1));
+    el.setAttribute('r',(1.0+st.bright*1.4).toFixed(1));
+    const col=st.blue?'rgb(160,185,255)':'rgb(255,255,215)';
+    el.setAttribute('fill',col);
+    el.setAttribute('opacity',starA.toFixed(3));
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INFO PANEL
+// ═══════════════════════════════════════════════════════════════════════════
+const moonNames=['New','Waxing ☽','1st Qtr','Waxing ◑','Full','Waning ◑','Last Qtr','Waning ☾'];
+const seasonNames=['Winter','Spring','Summer','Autumn'];
+function updateInfo(ss,ep,spd){
+  const h24=Math.floor(ss.dayPh*24);
+  const m60=Math.floor((ss.dayPh*24-h24)*60);
+  const si=Math.floor(((ss.yearPh+0.875)%1)*4);
+  const mi=Math.floor(ss.moonPh*8)%8;
+  document.getElementById('i-time')  .textContent=String(h24).padStart(2,'0')+':'+String(m60).padStart(2,'0');
+  document.getElementById('i-season').textContent=seasonNames[si];
+  document.getElementById('i-sun')   .textContent=(ss.sunEl*90).toFixed(1)+'°';
+  document.getElementById('i-moon')  .textContent=moonNames[mi];
+  document.getElementById('i-cloud') .textContent=(ss.cloudCover*100).toFixed(0)+'%';
+  document.getElementById('i-storm') .textContent=ss.storm?'⛈ Active':'Clear';
+  document.getElementById('i-epoch') .textContent=ep.toLocaleString();
+  document.getElementById('i-speed') .textContent=spd;
+  document.getElementById('v-ep')    .textContent=ep.toLocaleString();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STATE + UI WIRING
+// ═══════════════════════════════════════════════════════════════════════════
+let worldSeed=1337,regionX=0,regionY=0;
+let tpd=240,tpy=87600;
+let epoch=60,speed=60,playDir=1,paused=false;
+let cameraMode='orbit';
+let orbitTheta=0,orbitPhi=0.18;
+let scanAngle=0;
+let lastT=performance.now();
+
+rebuildStars(worldSeed);
+
+function setOn(id){
+  ['b-play','b-pause','b-rev','b-orbit','b-scan'].forEach(function(b){
+    document.getElementById(b).classList.remove('on');
+  });
+  document.getElementById(id).classList.add('on');
+}
+document.getElementById('b-play') .onclick=function(){ paused=false;playDir= 1;setOn('b-play'); };
+document.getElementById('b-pause').onclick=function(){ paused=true;            setOn('b-pause'); };
+document.getElementById('b-rev')  .onclick=function(){ paused=false;playDir=-1;setOn('b-rev'); };
+document.getElementById('b-orbit').onclick=function(){ cameraMode='orbit';setOn('b-orbit'); };
+document.getElementById('b-scan') .onclick=function(){ cameraMode='scan'; setOn('b-scan'); };
+
+document.getElementById('b-dawn') .onclick=function(){ epoch=Math.floor(epoch/tpd)*tpd+Math.floor(tpd*.22); };
+document.getElementById('b-noon') .onclick=function(){ epoch=Math.floor(epoch/tpd)*tpd+Math.floor(tpd*.5);  };
+document.getElementById('b-dusk') .onclick=function(){ epoch=Math.floor(epoch/tpd)*tpd+Math.floor(tpd*.78); };
+document.getElementById('b-night').onclick=function(){ epoch=Math.floor(epoch/tpd)*tpd; };
+
+const slEpoch=document.getElementById('sl-epoch');
+const slSpeed=document.getElementById('sl-speed');
+const slTpd  =document.getElementById('sl-tpd');
+slEpoch.addEventListener('input',function(){ epoch=parseInt(slEpoch.value); });
+slSpeed.addEventListener('input',function(){ speed=parseInt(slSpeed.value); document.getElementById('v-sp').textContent=speed; });
+slTpd  .addEventListener('input',function(){ tpd  =parseInt(slTpd.value);   document.getElementById('v-tpd').textContent=tpd; });
+
+document.getElementById('inp-seed').addEventListener('change',function(e){
+  worldSeed=parseInt(e.target.value)||1337; rebuildStars(worldSeed);
+});
+document.getElementById('inp-rx').addEventListener('change',function(e){ regionX=parseInt(e.target.value)||0; });
+document.getElementById('inp-ry').addEventListener('change',function(e){ regionY=parseInt(e.target.value)||0; });
+
+// Drag to orbit
+let drag=false,lmx=0,lmy=0;
+canvas3d.addEventListener('mousedown',function(e){ drag=true;lmx=e.clientX;lmy=e.clientY; });
+window  .addEventListener('mouseup',  function(){ drag=false; });
+window  .addEventListener('mousemove',function(e){
+  if(!drag||cameraMode!=='orbit') return;
+  orbitTheta-=(e.clientX-lmx)*.005;
+  orbitPhi  -=(e.clientY-lmy)*.005;
+  orbitPhi   =Math.max(.04,Math.min(Math.PI*.46,orbitPhi));
+  lmx=e.clientX;lmy=e.clientY;
+});
+canvas3d.addEventListener('touchstart',function(e){ drag=true;lmx=e.touches[0].clientX;lmy=e.touches[0].clientY; },{passive:true});
+window  .addEventListener('touchend',  function(){ drag=false; });
+window  .addEventListener('touchmove', function(e){
+  if(!drag||cameraMode!=='orbit') return;
+  orbitTheta-=(e.touches[0].clientX-lmx)*.005;
+  orbitPhi  -=(e.touches[0].clientY-lmy)*.005;
+  orbitPhi   =Math.max(.04,Math.min(Math.PI*.46,orbitPhi));
+  lmx=e.touches[0].clientX;lmy=e.touches[0].clientY;
+},{passive:true});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RENDER LOOP
+// ═══════════════════════════════════════════════════════════════════════════
+function loop(now){
+  requestAnimationFrame(loop);
+  const dt=Math.min((now-lastT)/1000,.1); lastT=now;
+
+  if(!paused){
+    epoch=Math.floor(epoch+speed*dt*playDir);
+    if(epoch<0) epoch=tpy*100+epoch;
+  }
+
+  const ss=skyState(epoch,worldSeed,regionX,regionY,tpd,tpy);
+  // nightBlend: 1=full night, 0=full day
+  const nightBlend=clamp((-ss.sunEl+0.05)/0.22,0,1);
+
+  // Canvas sky texture — redraw & upload
+  drawSkyTexture(ss);
+  skyTex.needsUpdate=true;
+
+  // Three.js lights
+  updateLighting(ss);
+
+  // Camera
+  const R=180;
+  if(cameraMode==='orbit'){
+    camera.position.set(
+      R*Math.sin(orbitTheta)*Math.cos(orbitPhi),
+      R*Math.sin(orbitPhi)+30,
+      R*Math.cos(orbitTheta)*Math.cos(orbitPhi)
+    );
+    camera.lookAt(0,30,0);
+  } else {
+    scanAngle+=dt*0.18;
+    camera.position.set(0,8,0);
+    camera.lookAt(
+      Math.sin(scanAngle)*4000,
+      Math.sin(scanAngle*.35)*800+120,
+      Math.cos(scanAngle)*4000
+    );
+  }
+  camera.updateMatrixWorld();
+
+  // SVG overlay: sun, moon, stars
+  updateSVGOverlay(ss,camera,nightBlend);
+
+  // Info panel
+  updateInfo(ss,epoch,speed);
+  slEpoch.value=epoch%tpy;
+
+  renderer.render(scene,camera);
+}
+
+setOn('b-play');
+setOn('b-orbit');
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

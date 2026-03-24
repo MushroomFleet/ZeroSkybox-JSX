@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>ZeroSkybox V2 - Pole Rotation, Constellations, Planets, Milky Way</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;
+  font-family:'Courier New',monospace;color:#c8dff0}
+#c{position:fixed;inset:0;display:block;width:100%!important;height:100%!important}
+#sky-svg{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;overflow:hidden}
+#hud{position:fixed;top:0;left:0;right:0;z-index:20;padding:9px 16px;
+  background:linear-gradient(180deg,rgba(0,0,0,.72) 0%,transparent 100%);
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;pointer-events:none}
+#hud h1{font-size:.82rem;font-weight:700;letter-spacing:.12em;color:#aee8ff;text-transform:uppercase}
+.tag{font-size:.58rem;background:rgba(100,200,255,.08);border:1px solid rgba(100,200,255,.22);
+  border-radius:3px;padding:2px 6px;color:#88ccee;letter-spacing:.05em}
+.tag.v{background:rgba(80,255,180,.08);border-color:rgba(80,255,180,.25);color:#80ffcc}
+#info{position:fixed;top:46px;right:14px;z-index:20;
+  background:rgba(0,2,12,.84);border:1px solid rgba(80,160,255,.18);
+  border-radius:7px;padding:9px 13px;font-size:.64rem;line-height:1.95;color:#88aac4;
+  min-width:200px;pointer-events:none}
+#info .sh{color:#4ac8f0;font-size:.57rem;text-transform:uppercase;letter-spacing:.1em;margin-top:5px}
+#info span{color:#cce8ff;font-weight:700}
+#seeds{position:fixed;top:46px;left:14px;z-index:20;
+  background:rgba(0,2,12,.84);border:1px solid rgba(80,160,255,.18);
+  border-radius:7px;padding:9px 13px;font-size:.64rem;line-height:2;color:#88aac4;min-width:168px}
+#seeds label{display:block;font-size:.57rem;text-transform:uppercase;color:#5a90b0;letter-spacing:.05em}
+#seeds input[type=number]{background:rgba(255,255,255,.05);border:1px solid rgba(80,160,255,.22);
+  color:#cce8ff;border-radius:3px;padding:2px 6px;width:100%;font-size:.74rem;font-family:inherit}
+#seeds input:focus{outline:1px solid #4ac8f0}
+#legend{position:fixed;top:46px;left:198px;z-index:20;
+  background:rgba(0,2,12,.84);border:1px solid rgba(80,160,255,.18);
+  border-radius:7px;padding:9px 13px;font-size:.62rem;line-height:1.85;color:#88aac4}
+#legend .sh{color:#4ac8f0;font-size:.57rem;text-transform:uppercase;letter-spacing:.1em;margin-bottom:2px}
+.pl{display:flex;align-items:center;gap:6px}
+.pl-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+#ctrl{position:fixed;bottom:0;left:0;right:0;z-index:20;padding:10px 18px 14px;
+  background:linear-gradient(0deg,rgba(0,0,0,.82) 0%,transparent 100%);
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px 22px}
+.cg label{display:block;font-size:.58rem;text-transform:uppercase;letter-spacing:.06em;
+  color:#5a90b0;margin-bottom:2px}
+.cg .val{float:right;color:#aaccdd;font-size:.58rem}
+.cg input[type=range]{width:100%;accent-color:#4ac8f0;cursor:pointer}
+.row{display:flex;gap:5px;flex-wrap:wrap;margin-top:2px}
+button{background:rgba(60,180,240,.1);border:1px solid rgba(60,180,240,.3);
+  color:#88ccee;border-radius:4px;padding:3px 10px;font-size:.63rem;
+  cursor:pointer;transition:background .12s;letter-spacing:.05em;font-family:inherit}
+button:hover{background:rgba(60,180,240,.25)}
+button.on{background:rgba(60,180,240,.28);border-color:#4ac8f0;color:#fff}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<svg id="sky-svg" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="sun-grad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#fff8e0" stop-opacity="1"/>
+      <stop offset="40%"  stop-color="#ffe080" stop-opacity="1"/>
+      <stop offset="70%"  stop-color="#ff9a20" stop-opacity=".6"/>
+      <stop offset="100%" stop-color="#ff6000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="moon-grad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#e8eeff" stop-opacity="1"/>
+      <stop offset="60%"  stop-color="#c0ccee" stop-opacity="1"/>
+      <stop offset="85%"  stop-color="#8899cc" stop-opacity=".4"/>
+      <stop offset="100%" stop-color="#8899cc" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="moon-clip"><circle id="moon-clip-c" r="22" cx="0" cy="0"/></clipPath>
+    <filter id="cst-glow" x="-300%" y="-300%" width="700%" height="700%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1.8" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="pole-glow" x="-400%" y="-400%" width="900%" height="900%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3.0" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="planet-glow" x="-200%" y="-200%" width="500%" height="500%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2.8" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g id="lyr-milky"></g>
+  <g id="lyr-bgstars"></g>
+  <g id="lyr-cst-edges"></g>
+  <g id="lyr-cst-stars"></g>
+  <g id="lyr-cst-labels"></g>
+  <g id="lyr-polestar"></g>
+  <g id="lyr-planets"></g>
+  <g id="lyr-moon" opacity="0">
+    <circle id="moon-halo" r="52" cx="0" cy="0" fill="url(#moon-grad)" opacity=".32"/>
+    <g clip-path="url(#moon-clip)">
+      <circle id="moon-disc" r="22" cx="0" cy="0" fill="#d0daff"/>
+      <ellipse id="moon-shadow" rx="22" ry="22" cx="0" cy="0" fill="#080c1a"/>
+    </g>
+  </g>
+  <g id="lyr-sun" opacity="0">
+    <circle id="sun-corona" r="80" cx="0" cy="0" fill="url(#sun-grad)" opacity=".5"/>
+    <circle id="sun-mid"    r="44" cx="0" cy="0" fill="url(#sun-grad)" opacity=".7"/>
+    <circle id="sun-disc"   r="22" cx="0" cy="0" fill="#fff8d0"/>
+    <circle id="sun-core"   r="10" cx="0" cy="0" fill="#ffffff"/>
+  </g>
+</svg>
+
+<div id="hud">
+  <h1>ZeroSkybox V2</h1>
+  <span class="tag">ZeroBytes</span>
+  <span class="tag">Zero-Temporal</span>
+  <span class="tag v">Pole-Axis Rotation</span>
+  <span class="tag v">Constellations</span>
+  <span class="tag v">Planets + Ecliptic</span>
+  <span class="tag v">Milky Way</span>
+  <span class="tag v">Twinkle</span>
+  <span class="tag v">Extinction</span>
+</div>
+
+<div id="info">
+  <div class="sh">Sky State</div>
+  Time: <span id="i-time">--</span><br/>
+  Season: <span id="i-season">--</span><br/>
+  Sun: <span id="i-sun">--</span><br/>
+  Moon: <span id="i-moon">--</span><br/>
+  Cloud: <span id="i-cloud">--</span><br/>
+  Storm: <span id="i-storm">--</span><br/>
+  <div class="sh">Celestial</div>
+  Sidereal: <span id="i-sid">--</span><br/>
+  Polestar: <span id="i-pole">--</span><br/>
+  Latitude: <span id="i-lat">--</span><br/>
+  <div class="sh">Epoch</div>
+  Tick: <span id="i-ep">--</span><br/>
+  Speed: <span id="i-sp">--</span>x
+</div>
+
+<div id="seeds">
+  <label>World Seed</label>
+  <input type="number" id="inp-seed" value="1337" min="0" max="999999"/>
+  <label style="margin-top:4px">Latitude (deg)</label>
+  <input type="number" id="inp-lat" value="51.5" min="-85" max="85" step="0.5"/>
+  <label>Region X</label>
+  <input type="number" id="inp-rx" value="0" min="-100" max="100"/>
+  <label>Region Y</label>
+  <input type="number" id="inp-ry" value="0" min="-100" max="100"/>
+</div>
+
+<div id="legend">
+  <div class="sh">Planets</div>
+  <div class="pl"><div class="pl-dot" style="background:#c8b8a0"></div>Mercury</div>
+  <div class="pl"><div class="pl-dot" style="background:#f0e060"></div>Venus</div>
+  <div class="pl"><div class="pl-dot" style="background:#e05028"></div>Mars</div>
+  <div class="pl"><div class="pl-dot" style="background:#e8c880"></div>Jupiter</div>
+  <div class="pl"><div class="pl-dot" style="background:#d4b870;width:16px;border-radius:0;height:3px;margin:2px 0"></div>Saturn</div>
+</div>
+
+<div id="ctrl">
+  <div class="cg">
+    <label>Epoch <span class="val" id="v-ep">0</span></label>
+    <input type="range" id="sl-ep" min="0" max="87600" value="60" step="1"/>
+  </div>
+  <div class="cg">
+    <label>Speed <span class="val" id="v-sp">60</span>x/s</label>
+    <input type="range" id="sl-sp" min="0" max="3000" value="60" step="1"/>
+  </div>
+  <div class="cg">
+    <label>Ticks/Day <span class="val" id="v-tpd">240</span></label>
+    <input type="range" id="sl-tpd" min="24" max="1440" value="240" step="24"/>
+  </div>
+  <div class="cg">
+    <label>Jump to time</label>
+    <div class="row">
+      <button id="b-dawn">Dawn</button>
+      <button id="b-noon">Noon</button>
+      <button id="b-dusk">Dusk</button>
+      <button id="b-night">Midnight</button>
+    </div>
+  </div>
+  <div class="cg">
+    <label>Playback</label>
+    <div class="row">
+      <button id="b-play" class="on">Play</button>
+      <button id="b-pause">Pause</button>
+      <button id="b-rev">Reverse</button>
+    </div>
+  </div>
+  <div class="cg">
+    <label>Camera</label>
+    <div class="row">
+      <button id="b-orbit" class="on">Orbit</button>
+      <button id="b-scan">Sky Scan</button>
+      <button id="b-north">Face North</button>
+    </div>
+  </div>
+  <div class="cg">
+    <label>Overlay</label>
+    <div class="row">
+      <button id="b-cst"  class="on">Constellations</button>
+      <button id="b-pl"   class="on">Planets</button>
+      <button id="b-mw"   class="on">Milky Way</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ===========================================================================
+// HASH KERNEL
+// ===========================================================================
+function wang(n){
+  n=((n^61)^(n>>>16))>>>0; n=((n+(n<<3))>>>0);
+  n=((n^(n>>>4))>>>0); n=(Math.imul(n,0x27d4eb2d)>>>0);
+  n=((n^(n>>>15))>>>0); return n>>>0;
+}
+function posHash(x,y,z,s){
+  s=(s|0);
+  let h=wang((x&0x7fffffff)>>>0);
+  h=wang((h^((y&0x7fffffff)>>>0))>>>0);
+  h=wang((h^((z&0x7fffffff)>>>0))>>>0);
+  h=wang((h^((s&0x7fffffff)>>>0))>>>0);
+  return h>>>0;
+}
+function tempHash(x,y,z,ep,s){
+  let h=posHash(x,y,z,s|0);
+  h=wang((h^((Math.abs(Math.floor(ep))&0x7fffffff)>>>0))>>>0);
+  return h>>>0;
+}
+function h2f(h){return(h>>>0)/0x100000000;}
+function coherent(fx,fy,seed,oct){
+  oct=oct||4; let v=0,a=1,f=1,ma=0;
+  for(let i=0;i<oct;i++){
+    const x0=Math.floor(fx*f),y0=Math.floor(fy*f);
+    let sx=(fx*f)-x0; sx=sx*sx*(3-2*sx);
+    let sy=(fy*f)-y0; sy=sy*sy*(3-2*sy);
+    const n00=h2f(posHash(x0,  y0,  0,seed+i))*2-1;
+    const n10=h2f(posHash(x0+1,y0,  0,seed+i))*2-1;
+    const n01=h2f(posHash(x0,  y0+1,0,seed+i))*2-1;
+    const n11=h2f(posHash(x0+1,y0+1,0,seed+i))*2-1;
+    v+=a*((n00*(1-sx)+n10*sx)*(1-sy)+(n01*(1-sx)+n11*sx)*sy);
+    ma+=a; a*=.5; f*=2;
+  }
+  return v/ma;
+}
+function clamp(v,lo,hi){return v<lo?lo:v>hi?hi:v;}
+
+// ===========================================================================
+// SKY STATE
+// ===========================================================================
+function skyState(epoch,seed,rx,ry,tpd,tpy){
+  const ep=Math.floor(epoch);
+  const dayPh=(ep%tpd)/tpd, yearPh=(ep%tpy)/tpy;
+  const sunEl=Math.sin((dayPh-.25)*Math.PI*2), sunAz=dayPh*Math.PI*2;
+  const moonEl=Math.sin((dayPh+.25)*Math.PI*2), moonAz=(dayPh+.5)*Math.PI*2;
+  const season=Math.sin(yearPh*Math.PI*2);
+  const dayIdx=Math.floor(ep/tpd);
+  const cSeed=tempHash(rx,ry,0,dayIdx,seed+100);
+  const sSeed=tempHash((rx>>2)|0,(ry>>2)|0,0,Math.floor(dayIdx/7),seed+200);
+  const dSeed=tempHash(rx,ry,1,Math.floor(ep/(tpd/6))|0,seed+300);
+  const moist=(coherent(rx*.1,ry*.1,seed+500)+1)*.5;
+  const moonPh=(ep%(tpd*29))/(tpd*29);
+  return{dayPh,yearPh,season,sunEl,sunAz,moonEl,moonAz,
+    cloudCover:h2f(cSeed), cloudOff:h2f(dSeed),
+    storm:h2f(sSeed)>0.85&&moist>0.4, moonPh};
+}
+
+// ===========================================================================
+// CELESTIAL MECHANICS
+// ===========================================================================
+function siderealAngle(epoch,tpd){
+  return(epoch/(tpd*0.9973))*Math.PI*2;
+}
+
+// Pole-axis rotation quaternion — stars rotate around (0,sin(lat),cos(lat))
+function poleQuaternion(sRad,latRad){
+  const axis=new THREE.Vector3(0,Math.sin(latRad),Math.cos(latRad)).normalize();
+  return new THREE.Quaternion().setFromAxisAngle(axis,sRad);
+}
+
+// Az + elevation-as-sin -> unit Vector3
+function azElVec(az,el){
+  const c=Math.sqrt(Math.max(0,1-el*el));
+  return new THREE.Vector3(c*Math.sin(az),el,c*Math.cos(az)).normalize();
+}
+
+// Project a unit-vector direction to screen coords
+const _prjV=new THREE.Vector3();
+function project(dir,cam,W,H){
+  _prjV.copy(dir).multiplyScalar(6000).add(cam.position);
+  _prjV.project(cam);
+  if(_prjV.z>1) return null;
+  return{x:(_prjV.x*.5+.5)*W, y:(-_prjV.y*.5+.5)*H};
+}
+
+// ===========================================================================
+// ATMOSPHERIC EXTINCTION
+// ===========================================================================
+function extinction(el,bright){
+  return bright*Math.pow(Math.max(0,el)+0.04,0.35);
+}
+
+// ===========================================================================
+// TWINKLE  (ZeroTemporal — planets exempt)
+// ===========================================================================
+function twinkle(idx,epoch,seed,el,isPlanet){
+  if(isPlanet) return 1.0;
+  const fH=posHash(idx,0,9,seed+4444);
+  const pH=posHash(idx,1,9,seed+4444);
+  const freq=0.08+h2f(fH)*0.18;
+  const phase=h2f(pH)*Math.PI*2;
+  const amp=0.12*clamp(1-el*4,0,1);
+  return 1.0+amp*Math.sin(epoch*freq+phase);
+}
+
+// ===========================================================================
+// BACKGROUND STARS  (ZeroBytes, uniform sphere distribution)
+// ===========================================================================
+function buildBgStars(seed,count){
+  const stars=[];
+  for(let i=0;i<(count||650);i++){
+    const s1=posHash(i,10,0,seed+1111), s2=posHash(i,11,0,seed+1111);
+    const s3=posHash(i,12,0,seed+1111), s4=posHash(i,13,0,seed+1111);
+    const s5=posHash(i,14,0,seed+1111);
+    const az=h2f(s1)*Math.PI*2;
+    const cosEl=h2f(s2)*2-1;
+    const el=Math.sqrt(1-cosEl*cosEl)*(cosEl>=0?1:-1);
+    stars.push({vec:azElVec(az,el), bright:.12+h2f(s3)*.50,
+      blue:h2f(s4)>.62, r:.28+h2f(s5)*.32});
+  }
+  return stars;
+}
+
+// ===========================================================================
+// POLESTAR  (fixed at celestial pole)
+// ===========================================================================
+const POLE_NAMES=['Polaris','Kelvorn','Stellith','Nadir-Prime','Axion','Velanthor'];
+function buildPolestar(seed,latRad){
+  const n=POLE_NAMES[posHash(0,0,0,seed+6666)%POLE_NAMES.length];
+  return{vec:new THREE.Vector3(0,Math.sin(latRad),Math.cos(latRad)).normalize(),
+    bright:.85, r:2.6, blue:false, name:n};
+}
+
+// ===========================================================================
+// CONSTELLATIONS  (ZeroBytes, 3-D vectors)
+// ===========================================================================
+const CST_NAMES=['Velthar','Sorun','Aethis','Droven','Quelith','Morvan','Isenax','Caelum'];
+function buildConstellations(seed){
+  const cons=[], TAU=Math.PI*2;
+  for(let ci=0;ci<8;ci++){
+    const cs=posHash(ci,0,0,seed+5555);
+    const centAz=(ci/8+h2f(cs)*.12)*TAU;
+    const centEl=.20+h2f(posHash(ci,1,0,seed+5555))*.55;
+    const nS=5+(posHash(ci,2,0,seed+5555)%5);
+    const spAz=.18+h2f(posHash(ci,3,0,seed+5555))*.16;
+    const spEl=.10+h2f(posHash(ci,4,0,seed+5555))*.10;
+    const stars=[];
+    for(let si=0;si<nS;si++){
+      const ss1=posHash(ci,si,1,seed+5555), ss2=posHash(ci,si,2,seed+5555);
+      const ss3=posHash(ci,si,3,seed+5555), ss4=posHash(ci,si,4,seed+5555);
+      const az=centAz+(h2f(ss1)*2-1)*spAz;
+      const el=clamp(centEl+(h2f(ss2)*2-1)*spEl,.05,.92);
+      stars.push({vec:azElVec(az,el), bright:.55+h2f(ss3)*.45,
+        r:1.8+h2f(ss4)*1.4, blue:h2f(posHash(ci,si,5,seed+5555))>.55});
+    }
+    const edges=[];
+    for(let si=0;si<nS-1;si++) edges.push([si,si+1]);
+    const xl1=posHash(ci,5,0,seed+5555)%nS, xl2=posHash(ci,6,0,seed+5555)%nS;
+    if(xl1!==xl2&&Math.abs(xl1-xl2)>1) edges.push([xl1,xl2]);
+    const xl3=posHash(ci,7,0,seed+5555)%nS, xl4=posHash(ci,8,0,seed+5555)%nS;
+    if(xl3!==xl4&&Math.abs(xl3-xl4)>1&&!edges.some(function(e){
+      return(e[0]===xl3&&e[1]===xl4)||(e[0]===xl4&&e[1]===xl3);}))
+      edges.push([xl3,xl4]);
+    cons.push({name:CST_NAMES[ci], centVec:azElVec(centAz,centEl), stars, edges});
+  }
+  return cons;
+}
+
+// ===========================================================================
+// PLANETS  (ZeroBytes static + Kepler orbit, ecliptic plane)
+// ===========================================================================
+const PLN_NAMES=['Mercury','Venus','Mars','Jupiter','Saturn'];
+const PLN_PER  =[.24,.62,1.88,11.86,29.46];
+const PLN_COL  =['#c8b8a0','#f0e060','#e05028','#e8c880','#d4b870'];
+const PLN_R    =[2.2,3.5,2.8,4.2,3.8];
+const ECLTILT  =23.4*Math.PI/180;
+const ECLT_Q   =new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0),ECLTILT);
+
+function buildPlanets(seed,tpy){
+  return PLN_NAMES.map(function(name,i){
+    const p1=posHash(i,0,0,seed+8888), p2=posHash(i,1,0,seed+8888);
+    const p3=posHash(i,2,0,seed+8888), p4=posHash(i,3,0,seed+8888);
+    const p5=posHash(i,4,0,seed+8888);
+    return{name, colour:PLN_COL[i], svgR:PLN_R[i],
+      period:PLN_PER[i]*tpy*(.92+h2f(p1)*.16),
+      phase0:h2f(p2)*Math.PI*2, inclination:h2f(p3)*.12,
+      node:h2f(p4)*Math.PI*2, eccentricity:.02+h2f(p5)*.26,
+      isSaturn:name==='Saturn'};
+  });
+}
+
+function getPlanetVecs(planets,epoch,poleQ){
+  return planets.map(function(p){
+    const ep=Math.floor(epoch);
+    const M=(ep/p.period)*Math.PI*2+p.phase0;
+    const E=M+p.eccentricity*Math.sin(M);
+    const nu=2*Math.atan2(
+      Math.sqrt(1+p.eccentricity)*Math.sin(E/2),
+      Math.sqrt(1-p.eccentricity)*Math.cos(E/2));
+    const lon=nu+p.node;
+    const x=Math.cos(lon), z=Math.sin(lon);
+    const y=Math.sin(p.inclination)*Math.sin(nu);
+    // ecliptic -> equatorial -> sidereal rotation
+    const vec=new THREE.Vector3(x,y,z).normalize()
+      .applyQuaternion(ECLT_Q)
+      .applyQuaternion(poleQ);
+    return{name:p.name, colour:p.colour, svgR:p.svgR, isSaturn:p.isSaturn, vec};
+  });
+}
+
+// ===========================================================================
+// MILKY WAY  (great circle band, rotates with stars)
+// ===========================================================================
+function buildMilkyWay(seed,count){
+  const pts=[], TAU=Math.PI*2;
+  // Galactic pole in equatorial coords
+  const galPole=new THREE.Vector3(
+    Math.cos(0.473)*Math.cos(3.366),
+    Math.sin(0.473),
+    Math.cos(0.473)*Math.sin(3.366)).normalize();
+  // A perpendicular reference vector
+  let perp=new THREE.Vector3(0,1,0);
+  perp.sub(galPole.clone().multiplyScalar(perp.dot(galPole))).normalize();
+  for(let i=0;i<(count||80);i++){
+    const lon=(i/(count||80))*TAU;
+    const q=new THREE.Quaternion().setFromAxisAngle(galPole,lon);
+    const vec=perp.clone().applyQuaternion(q);
+    const bH=posHash(i,0,0,seed+3333);
+    const wH=posHash(i,1,0,seed+3333);
+    pts.push({vec, bright:.025+h2f(bH)*.04, w:16+h2f(wH)*32});
+  }
+  return pts;
+}
+
+// ===========================================================================
+// CANVAS SKY TEXTURE
+// ===========================================================================
+const SKY_W=512, SKY_H=512;
+const skyCanvas=document.createElement('canvas');
+skyCanvas.width=SKY_W; skyCanvas.height=SKY_H;
+const skyCtx=skyCanvas.getContext('2d');
+function lerp(a,b,t){return a+(b-a)*t;}
+function lerp3(a,b,t){return[lerp(a[0],b[0],t),lerp(a[1],b[1],t),lerp(a[2],b[2],t)];}
+
+function drawSky(ss){
+  const{sunEl,season,cloudCover,cloudOff,storm}=ss;
+  const t=clamp((sunEl+1)/2,0,1), twil=Math.max(0,1-Math.abs(sunEl)*5);
+  const night=[[3,4,18],[5,7,28],[10,14,36],[2,3,10]];
+  const day  =[[28,95,215],[70,155,240],[155,205,255],[38,55,75]];
+  const twi  =[[35,18,75],[130,55,28],[250,115,35],[55,28,8]];
+  function lP(pa,pb,t){return pa.map(function(_,i){return lerp3(pa[i],pb[i],t);});}
+  let pal=lP(night,day,t);
+  pal=pal.map(function(c,i){return lerp3(c,twi[i],twil*.95);});
+  if(storm){pal=pal.map(function(c){const a=(c[0]+c[1]+c[2])/3;return[a*.5+c[0]*.2,a*.5+c[1]*.2,a*.5+c[2]*.2];});}
+  const gc=cloudCover*.3;
+  pal=pal.map(function(c){const a=(c[0]+c[1]+c[2])/3;return[c[0]*(1-gc)+a*gc,c[1]*(1-gc)+a*gc,c[2]*(1-gc)+a*gc];});
+  const ws=season*10;
+  pal=pal.map(function(c){return[c[0]+ws,c[1]+ws*.25,c[2]-ws*.4];});
+  const css=pal.map(function(c){return'rgb('+c.map(function(v){return clamp(Math.round(v),0,255);}).join(',')+')';});
+  const g=skyCtx.createLinearGradient(0,0,0,SKY_H);
+  g.addColorStop(0,css[0]); g.addColorStop(.32,css[1]);
+  g.addColorStop(.70,css[2]); g.addColorStop(1,css[3]);
+  skyCtx.fillStyle=g; skyCtx.fillRect(0,0,SKY_W,SKY_H);
+  if(cloudCover>.05){
+    const dT=t, cr=storm?110:Math.round(195+dT*60);
+    const cg2=storm?115:Math.round(200+dT*55), cb=storm?135:Math.round(215+dT*40);
+    const bA=cloudCover*(storm?.88:.60), dx=cloudOff*SKY_W;
+    [[.12,.20,210,42],[.48,.15,240,48],[.76,.26,170,34],[.32,.30,140,30],[.63,.38,190,38]].forEach(function(d){
+      const cx=((d[0]*SKY_W+dx)%SKY_W+SKY_W)%SKY_W, cy=d[1]*SKY_H, rx=d[2], ry=d[3];
+      const gr=skyCtx.createRadialGradient(cx,cy,0,cx,cy,rx);
+      gr.addColorStop(0,'rgba('+cr+','+cg2+','+cb+','+bA+')');
+      gr.addColorStop(.5,'rgba('+cr+','+cg2+','+cb+','+(bA*.55).toFixed(3)+')');
+      gr.addColorStop(1,'rgba('+cr+','+cg2+','+cb+',0)');
+      skyCtx.fillStyle=gr; skyCtx.save(); skyCtx.scale(1,ry/rx);
+      skyCtx.beginPath(); skyCtx.arc(cx,cy*(rx/ry),rx,0,Math.PI*2);
+      skyCtx.fill(); skyCtx.restore();
+    });
+  }
+}
+
+// ===========================================================================
+// THREE.JS SETUP
+// ===========================================================================
+const canvas3=document.getElementById('c');
+const renderer=new THREE.WebGLRenderer({canvas:canvas3,antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;
+renderer.setClearColor(0x000000,1);
+const scene =new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,.5,30000);
+camera.position.set(0,60,0);
+
+window.addEventListener('resize',function(){
+  renderer.setSize(innerWidth,innerHeight);
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+// Sky dome
+const skyTex=new THREE.CanvasTexture(skyCanvas); skyTex.flipY=true;
+const dome=new THREE.Mesh(
+  new THREE.SphereGeometry(10000,48,24,0,Math.PI*2,0,Math.PI/2+.3),
+  new THREE.MeshBasicMaterial({map:skyTex,side:THREE.BackSide,depthWrite:false,fog:false}));
+dome.renderOrder=-1; scene.add(dome);
+
+// Ground
+const gndMat=new THREE.MeshLambertMaterial({color:0x1a2e14});
+const gnd=new THREE.Mesh(new THREE.PlaneGeometry(10000,10000),gndMat);
+gnd.rotation.x=-Math.PI/2; gnd.receiveShadow=true; scene.add(gnd);
+
+// Pillars
+[[-120,-80,180,0x7a8a78],[140,-60,220,0x6a7868],[30,-130,150,0x8a9a88],
+ [-200,50,260,0x5a6858],[90,90,130,0x7a8878]].forEach(function(p){
+  const m=new THREE.Mesh(new THREE.CylinderGeometry(8,10,p[2],8),
+    new THREE.MeshLambertMaterial({color:p[3]}));
+  m.position.set(p[0],p[2]/2,p[1]); m.castShadow=true; scene.add(m);
+});
+
+// Lights
+const sunLight=new THREE.DirectionalLight(0xfff5d0,1.0);
+sunLight.castShadow=true;
+sunLight.shadow.mapSize.set(1024,1024);
+sunLight.shadow.camera.near=10; sunLight.shadow.camera.far=25000;
+sunLight.shadow.camera.left=sunLight.shadow.camera.bottom=-800;
+sunLight.shadow.camera.right=sunLight.shadow.camera.top=800;
+scene.add(sunLight); scene.add(sunLight.target);
+const moonLight=new THREE.DirectionalLight(0x7788bb,0);
+scene.add(moonLight); scene.add(moonLight.target);
+const ambLight=new THREE.AmbientLight(0x101828,.4); scene.add(ambLight);
+
+function updateLighting(ss){
+  const sd=Math.max(0,ss.sunEl);
+  const sDir=azElVec(ss.sunAz,ss.sunEl);
+  sunLight.position.copy(sDir).multiplyScalar(9000);
+  sunLight.target.position.set(0,0,0); sunLight.target.updateMatrixWorld();
+  sunLight.intensity=sd*(ss.storm?.35:1)*(1-ss.cloudCover*.55)*1.5;
+  sunLight.color.setRGB(1,.68+sd*.32,.35+sd*.6);
+  const md=Math.max(0,ss.moonEl);
+  const mDir=azElVec(ss.moonAz,ss.moonEl);
+  moonLight.position.copy(mDir).multiplyScalar(9000);
+  moonLight.target.position.set(0,0,0); moonLight.target.updateMatrixWorld();
+  moonLight.intensity=md*(1-Math.max(0,ss.sunEl)*3)*.15;
+  const dT=clamp((ss.sunEl+.1)/.4,0,1);
+  ambLight.color.setRGB(.05+dT*.42,.07+dT*.46,.14+dT*.34);
+  ambLight.intensity=.35+dT*.65;
+  gndMat.color.setRGB(clamp(.04+dT*.16,0,1),clamp(.09+dT*.26,0,1),clamp(.03+dT*.10,0,1));
+}
+
+// ===========================================================================
+// SVG LAYER MANAGEMENT
+// ===========================================================================
+const NS='http://www.w3.org/2000/svg';
+const lyrMilky   =document.getElementById('lyr-milky');
+const lyrBgStars =document.getElementById('lyr-bgstars');
+const lyrEdges   =document.getElementById('lyr-cst-edges');
+const lyrCstStars=document.getElementById('lyr-cst-stars');
+const lyrLabels  =document.getElementById('lyr-cst-labels');
+const lyrPole    =document.getElementById('lyr-polestar');
+const lyrPlanets =document.getElementById('lyr-planets');
+const lyrMoon    =document.getElementById('lyr-moon');
+const lyrSun     =document.getElementById('lyr-sun');
+const moonShadow =document.getElementById('moon-shadow');
+
+// Background star pool
+let bgPool=[];
+function ensureBgPool(n){
+  while(bgPool.length<n){
+    const el=document.createElementNS(NS,'circle');
+    el.setAttribute('opacity','0'); lyrBgStars.appendChild(el); bgPool.push(el);
+  }
+}
+
+let svgW=innerWidth, svgH=innerHeight;
+window.addEventListener('resize',function(){svgW=innerWidth; svgH=innerHeight;});
+
+// Clear + repopulate dynamic SVG groups
+function clearGroup(g){while(g.firstChild)g.removeChild(g.firstChild);}
+
+function mk(tag,attrs){
+  const el=document.createElementNS(NS,tag);
+  for(const k in attrs) el.setAttribute(k,attrs[k]);
+  return el;
+}
+
+function updateSVG(ss,epoch,tpd,tpy,nightBlend,seed,latRad,showCst,showPl,showMW){
+  const sRad=siderealAngle(epoch,tpd);
+  const poleQ=poleQuaternion(sRad,latRad);
+
+  // ── Milky Way ──
+  clearGroup(lyrMilky);
+  if(showMW&&nightBlend>.04){
+    milkyWayData.forEach(function(mw){
+      const rv=mw.vec.clone().applyQuaternion(poleQ);
+      const p=project(rv,camera,svgW,svgH);
+      if(!p||rv.y<-.15) return;
+      const alph=(mw.bright*nightBlend).toFixed(4);
+      lyrMilky.appendChild(mk('ellipse',{
+        cx:p.x.toFixed(1),cy:p.y.toFixed(1),
+        rx:(mw.w*.6).toFixed(1),ry:(mw.w*.25).toFixed(1),
+        fill:'rgba(200,210,255,'+alph+')'}));
+    });
+  }
+
+  // ── Background stars (pooled) ──
+  ensureBgPool(bgStarsData.length);
+  for(let i=0;i<bgStarsData.length;i++){
+    const st=bgStarsData[i];
+    const rv=st.vec.clone().applyQuaternion(poleQ);
+    const p=project(rv,camera,svgW,svgH);
+    const el=bgPool[i];
+    if(!p||rv.y<-.03){el.setAttribute('opacity','0');continue;}
+    const twk=twinkle(i,epoch,seed,rv.y,false);
+    const alpha=clamp(extinction(rv.y,st.bright)*nightBlend*twk,0,1);
+    if(alpha<.02){el.setAttribute('opacity','0');continue;}
+    el.setAttribute('cx',p.x.toFixed(1)); el.setAttribute('cy',p.y.toFixed(1));
+    el.setAttribute('r',st.r.toFixed(2));
+    el.setAttribute('fill',st.blue?'rgb(175,200,255)':'rgb(255,255,225)');
+    el.setAttribute('opacity',alpha.toFixed(3));
+  }
+
+  // ── Constellations ──
+  clearGroup(lyrEdges); clearGroup(lyrCstStars); clearGroup(lyrLabels);
+  if(showCst&&nightBlend>.06){
+    constellData.forEach(function(con,ci){
+      // Project all stars — ci is now properly scoped from forEach index
+      const projS=con.stars.map(function(st,si){
+        const rv=st.vec.clone().applyQuaternion(poleQ);
+        const p=project(rv,camera,svgW,svgH);
+        if(!p||rv.y<-.03) return{p:null,a:0,r:st.r,blue:st.blue,vis:false};
+        const twk=twinkle(si*100+ci*1000,epoch,seed,rv.y,false);
+        const a=clamp(extinction(rv.y,st.bright)*nightBlend*twk,0,1);
+        return{p,a,r:st.r,blue:st.blue,vis:rv.y>0};
+      });
+      // Edges
+      con.edges.forEach(function(e){
+        const a=projS[e[0]], b=projS[e[1]];
+        if(!a.vis||!b.vis||!a.p||!b.p) return;
+        const ea=Math.min(a.a,b.a)*.38;
+        if(ea<.02) return;
+        lyrEdges.appendChild(mk('line',{
+          x1:a.p.x.toFixed(1),y1:a.p.y.toFixed(1),
+          x2:b.p.x.toFixed(1),y2:b.p.y.toFixed(1),
+          stroke:'rgba(140,185,255,1)','stroke-width':'0.55',
+          opacity:ea.toFixed(3)}));
+      });
+      // Stars
+      projS.forEach(function(st){
+        if(!st.p||st.a<.03) return;
+        lyrCstStars.appendChild(mk('circle',{
+          cx:st.p.x.toFixed(1),cy:st.p.y.toFixed(1),
+          r:st.r.toFixed(1),filter:'url(#cst-glow)',
+          fill:st.blue?'rgb(155,180,255)':'rgb(255,255,195)',
+          opacity:st.a.toFixed(3)}));
+      });
+      // Label at constellation centroid
+      const cRv=con.centVec.clone().applyQuaternion(poleQ);
+      const cP=project(cRv,camera,svgW,svgH);
+      if(cP&&cRv.y>.05&&nightBlend>.1){
+        const txt=mk('text',{
+          x:cP.x.toFixed(1),y:(cP.y+24).toFixed(1),
+          fill:'rgba(140,190,255,1)',
+          'font-size':'8.5','font-family':"'Courier New',monospace",
+          'letter-spacing':'1.8','text-anchor':'middle',
+          opacity:(nightBlend*.50).toFixed(3)});
+        txt.textContent=con.name.toUpperCase();
+        lyrLabels.appendChild(txt);
+      }
+    });
+  }
+
+  // ── Polestar ──
+  clearGroup(lyrPole);
+  const ps=polestarData;
+  // Polestar never rotates — it IS the axis tip
+  const psP=project(ps.vec,camera,svgW,svgH);
+  const psEl=ps.vec.y;
+  if(psP&&psEl>.02){
+    const psA=clamp(extinction(psEl,ps.bright)*nightBlend*1.2,0,1);
+    if(psA>.02){
+      const g=mk('g',{opacity:psA.toFixed(3),
+        transform:'translate('+psP.x.toFixed(1)+','+psP.y.toFixed(1)+')'});
+      g.appendChild(mk('circle',{r:'9',cx:'0',cy:'0',
+        fill:'rgba(180,210,255,0.1)',filter:'url(#pole-glow)'}));
+      g.appendChild(mk('circle',{r:'2.6',cx:'0',cy:'0',fill:'rgb(220,235,255)'}));
+      if(nightBlend>.15){
+        const t=document.createElementNS(NS,'text');
+        t.setAttribute('x','0'); t.setAttribute('y','-9');
+        t.setAttribute('fill','rgba(160,205,255,0.72)');
+        t.setAttribute('font-size','7.5');
+        t.setAttribute('font-family',"'Courier New',monospace");
+        t.setAttribute('letter-spacing','1.2');
+        t.setAttribute('text-anchor','middle');
+        t.textContent=ps.name.toUpperCase();
+        g.appendChild(t);
+      }
+      lyrPole.appendChild(g);
+    }
+  }
+
+  // ── Planets ──
+  clearGroup(lyrPlanets);
+  if(showPl){
+    getPlanetVecs(planetData,epoch,poleQ).forEach(function(pv){
+      const pos=project(pv.vec,camera,svgW,svgH);
+      if(!pos||pv.vec.y<-.08) return;
+      const el=pv.vec.y;
+      const alpha=clamp(extinction(el,.9)*nightBlend*clamp((el+.06)/.14,0,1),0,1);
+      if(alpha<.03) return;
+      const g=mk('g',{transform:'translate('+pos.x.toFixed(1)+','+pos.y.toFixed(1)+')',
+        opacity:alpha.toFixed(3)});
+      g.appendChild(mk('circle',{r:(pv.svgR*2.8).toFixed(1),cx:'0',cy:'0',
+        fill:pv.colour,opacity:'.18',filter:'url(#planet-glow)'}));
+      g.appendChild(mk('circle',{r:pv.svgR.toFixed(1),cx:'0',cy:'0',fill:pv.colour}));
+      if(pv.isSaturn){
+        g.appendChild(mk('ellipse',{rx:(pv.svgR*2.4).toFixed(1),ry:(pv.svgR*.65).toFixed(1),
+          cx:'0',cy:'0',fill:'none',stroke:pv.colour,'stroke-width':'1.2',opacity:'.88'}));
+      }
+      const lbl=document.createElementNS(NS,'text');
+      lbl.setAttribute('x','0'); lbl.setAttribute('y',(pv.svgR+11).toFixed(1));
+      lbl.setAttribute('fill',pv.colour); lbl.setAttribute('font-size','7.5');
+      lbl.setAttribute('font-family',"'Courier New',monospace");
+      lbl.setAttribute('letter-spacing','1'); lbl.setAttribute('text-anchor','middle');
+      lbl.setAttribute('opacity','.72'); lbl.textContent=pv.name.toUpperCase();
+      g.appendChild(lbl); lyrPlanets.appendChild(g);
+    });
+  }
+
+  // ── Moon ──
+  if(ss.moonEl>-.12){
+    const mP=project(azElVec(ss.moonAz,ss.moonEl),camera,svgW,svgH);
+    if(mP){
+      const mA=clamp((ss.moonEl+.10)/.18,0,1)*nightBlend;
+      lyrMoon.setAttribute('opacity',mA.toFixed(3));
+      lyrMoon.setAttribute('transform','translate('+mP.x.toFixed(1)+','+mP.y.toFixed(1)+')');
+      const pa=ss.moonPh*Math.PI*2;
+      moonShadow.setAttribute('cx',(Math.cos(pa)*22).toFixed(1));
+      moonShadow.setAttribute('cy','0');
+      moonShadow.setAttribute('rx',Math.max(0,Math.abs(Math.sin(pa))*22).toFixed(1));
+      moonShadow.setAttribute('ry','22');
+    } else { lyrMoon.setAttribute('opacity','0'); }
+  } else { lyrMoon.setAttribute('opacity','0'); }
+
+  // ── Sun ──
+  if(ss.sunEl>-.18){
+    const sP=project(azElVec(ss.sunAz,ss.sunEl),camera,svgW,svgH);
+    if(sP){
+      const sA=clamp((ss.sunEl+.14)/.22,0,1);
+      lyrSun.setAttribute('opacity',sA.toFixed(3));
+      lyrSun.setAttribute('transform','translate('+sP.x.toFixed(1)+','+sP.y.toFixed(1)+')');
+      const sT=clamp(ss.sunEl/.55,0,1);
+      document.getElementById('sun-disc').setAttribute('fill',
+        'rgb(255,'+Math.round(185+sT*70)+','+Math.round(70+sT*185)+')');
+    } else { lyrSun.setAttribute('opacity','0'); }
+  } else { lyrSun.setAttribute('opacity','0'); }
+}
+
+// ===========================================================================
+// STATE + CATALOGUE INIT
+// ===========================================================================
+let worldSeed=1337, regionX=0, regionY=0, latitude=51.5;
+let tpd=240, tpy=87600;
+let latRad=latitude*Math.PI/180;
+let epoch=60, speed=60, playDir=1, paused=false;
+let cameraMode='orbit', orbitTheta=0, orbitPhi=.18, scanAngle=0;
+let showCst=true, showPl=true, showMW=true;
+let lastT=performance.now();
+
+let bgStarsData, constellData, planetData, milkyWayData, polestarData;
+
+function rebuildCatalogues(){
+  latRad=latitude*Math.PI/180;
+  bgStarsData  =buildBgStars(worldSeed,650);
+  constellData =buildConstellations(worldSeed);
+  planetData   =buildPlanets(worldSeed,tpy);
+  milkyWayData =buildMilkyWay(worldSeed,80);
+  polestarData =buildPolestar(worldSeed,latRad);
+  ensureBgPool(bgStarsData.length);
+}
+rebuildCatalogues();
+
+// ===========================================================================
+// INFO PANEL
+// ===========================================================================
+const SEASONS=['Winter','Spring','Summer','Autumn'];
+const MOONS=['New','Waxing C','1st Qtr','Waxing G','Full','Waning G','Last Qtr','Waning C'];
+function updateInfo(ss,epoch,speed,tpd){
+  const h24=Math.floor(ss.dayPh*24), m60=Math.floor((ss.dayPh*24-h24)*60);
+  const si=Math.floor(((ss.yearPh+.875)%1)*4);
+  const mi=Math.floor(ss.moonPh*8)%8;
+  const sid=((siderealAngle(epoch,tpd)*180/Math.PI)%360).toFixed(1);
+  document.getElementById('i-time')  .textContent=String(h24).padStart(2,'0')+':'+String(m60).padStart(2,'0');
+  document.getElementById('i-season').textContent=SEASONS[si];
+  document.getElementById('i-sun')   .textContent=(ss.sunEl*90).toFixed(1)+'deg';
+  document.getElementById('i-moon')  .textContent=MOONS[mi];
+  document.getElementById('i-cloud') .textContent=(ss.cloudCover*100).toFixed(0)+'%';
+  document.getElementById('i-storm') .textContent=ss.storm?'Active':'Clear';
+  document.getElementById('i-sid')   .textContent=sid+'deg';
+  document.getElementById('i-pole')  .textContent=polestarData.name;
+  document.getElementById('i-lat')   .textContent=latitude.toFixed(1)+'deg';
+  document.getElementById('i-ep')    .textContent=epoch.toLocaleString();
+  document.getElementById('i-sp')    .textContent=speed;
+  document.getElementById('v-ep')    .textContent=epoch.toLocaleString();
+}
+
+// ===========================================================================
+// UI WIRING
+// ===========================================================================
+function setOn(id){
+  ['b-play','b-pause','b-rev','b-orbit','b-scan','b-north']
+    .forEach(function(b){document.getElementById(b).classList.remove('on');});
+  document.getElementById(id).classList.add('on');
+}
+document.getElementById('b-play') .onclick=function(){paused=false;playDir= 1;setOn('b-play');};
+document.getElementById('b-pause').onclick=function(){paused=true;            setOn('b-pause');};
+document.getElementById('b-rev')  .onclick=function(){paused=false;playDir=-1;setOn('b-rev');};
+document.getElementById('b-orbit').onclick=function(){cameraMode='orbit'; setOn('b-orbit');};
+document.getElementById('b-scan') .onclick=function(){cameraMode='scan';  setOn('b-scan');};
+document.getElementById('b-north').onclick=function(){cameraMode='north'; setOn('b-north');};
+
+document.getElementById('b-cst').onclick=function(){
+  showCst=!showCst; this.classList.toggle('on',showCst);};
+document.getElementById('b-pl').onclick=function(){
+  showPl=!showPl; this.classList.toggle('on',showPl);};
+document.getElementById('b-mw').onclick=function(){
+  showMW=!showMW; this.classList.toggle('on',showMW);};
+
+document.getElementById('b-dawn') .onclick=function(){epoch=Math.floor(epoch/tpd)*tpd+Math.floor(tpd*.22);};
+document.getElementById('b-noon') .onclick=function(){epoch=Math.floor(epoch/tpd)*tpd+Math.floor(tpd*.50);};
+document.getElementById('b-dusk') .onclick=function(){epoch=Math.floor(epoch/tpd)*tpd+Math.floor(tpd*.78);};
+document.getElementById('b-night').onclick=function(){epoch=Math.floor(epoch/tpd)*tpd;};
+
+const slEp=document.getElementById('sl-ep');
+const slSp=document.getElementById('sl-sp');
+const slTpd=document.getElementById('sl-tpd');
+slEp .addEventListener('input',function(){epoch=parseInt(slEp.value);});
+slSp .addEventListener('input',function(){speed=parseInt(slSp.value);document.getElementById('v-sp').textContent=speed;});
+slTpd.addEventListener('input',function(){tpd=parseInt(slTpd.value);document.getElementById('v-tpd').textContent=tpd;rebuildCatalogues();});
+
+document.getElementById('inp-seed').addEventListener('change',function(e){
+  worldSeed=parseInt(e.target.value)||1337; rebuildCatalogues();});
+document.getElementById('inp-lat').addEventListener('change',function(e){
+  latitude=parseFloat(e.target.value)||51.5; rebuildCatalogues();});
+document.getElementById('inp-rx').addEventListener('change',function(e){regionX=parseInt(e.target.value)||0;});
+document.getElementById('inp-ry').addEventListener('change',function(e){regionY=parseInt(e.target.value)||0;});
+
+// Orbit drag
+let drag=false,lmx=0,lmy=0;
+canvas3.addEventListener('mousedown',function(e){drag=true;lmx=e.clientX;lmy=e.clientY;});
+window .addEventListener('mouseup',  function(){drag=false;});
+window .addEventListener('mousemove',function(e){
+  if(!drag||cameraMode!=='orbit') return;
+  orbitTheta-=(e.clientX-lmx)*.005; orbitPhi-=(e.clientY-lmy)*.005;
+  orbitPhi=clamp(orbitPhi,.04,Math.PI*.48); lmx=e.clientX; lmy=e.clientY;
+});
+canvas3.addEventListener('touchstart',function(e){drag=true;lmx=e.touches[0].clientX;lmy=e.touches[0].clientY;},{passive:true});
+window .addEventListener('touchend',  function(){drag=false;});
+window .addEventListener('touchmove', function(e){
+  if(!drag||cameraMode!=='orbit') return;
+  orbitTheta-=(e.touches[0].clientX-lmx)*.005; orbitPhi-=(e.touches[0].clientY-lmy)*.005;
+  orbitPhi=clamp(orbitPhi,.04,Math.PI*.48); lmx=e.touches[0].clientX; lmy=e.touches[0].clientY;
+},{passive:true});
+
+// ===========================================================================
+// RENDER LOOP
+// ===========================================================================
+function loop(now){
+  requestAnimationFrame(loop);
+  const dt=Math.min((now-lastT)/1000,.1); lastT=now;
+
+  if(!paused){
+    epoch=Math.floor(epoch+speed*dt*playDir);
+    if(epoch<0) epoch=tpy*100+epoch;
+  }
+
+  const ss=skyState(epoch,worldSeed,regionX,regionY,tpd,tpy);
+  const nightBlend=clamp((-ss.sunEl+.05)/.22,0,1);
+
+  drawSky(ss); skyTex.needsUpdate=true;
+  updateLighting(ss);
+
+  // Camera
+  if(cameraMode==='orbit'){
+    const R=180;
+    camera.position.set(R*Math.sin(orbitTheta)*Math.cos(orbitPhi),R*Math.sin(orbitPhi)+30,R*Math.cos(orbitTheta)*Math.cos(orbitPhi));
+    camera.lookAt(0,30,0);
+  } else if(cameraMode==='scan'){
+    scanAngle+=dt*.18;
+    camera.position.set(0,8,0);
+    camera.lookAt(Math.sin(scanAngle)*4000,Math.sin(scanAngle*.35)*800+120,Math.cos(scanAngle)*4000);
+  } else {
+    // Face north — look toward the pole star
+    camera.position.set(0,8,0);
+    const poleDir=polestarData.vec.clone().multiplyScalar(500);
+    camera.lookAt(poleDir.x,poleDir.y+8,poleDir.z);
+  }
+  camera.updateMatrixWorld();
+
+  updateSVG(ss,epoch,tpd,tpy,nightBlend,worldSeed,latRad,showCst,showPl,showMW);
+  updateInfo(ss,epoch,speed,tpd);
+  slEp.value=epoch%tpy;
+
+  renderer.render(scene,camera);
+}
+
+setOn('b-play'); setOn('b-orbit');
+document.getElementById('b-cst').classList.add('on');
+document.getElementById('b-pl') .classList.add('on');
+document.getElementById('b-mw') .classList.add('on');
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

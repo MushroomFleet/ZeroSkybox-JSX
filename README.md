@@ -2,6 +2,8 @@
 
 A procedurally deterministic dynamic skybox for React + Three.js applications, built on the **ZeroBytes** and **Zero-Temporal** methodology. Drop it into any React Three.js scene and get a fully animated sky — day/night cycle, seasonal colour shifts, cloud cover, moon phases, storm events, and a projected SVG sun/moon/star overlay — with **zero stored state** and **O(1) access to any point in time**.
 
+Live Demo: [https://scuffedepoch.com/zero-skybox/](https://scuffedepoch.com/zero-skybox/)
+
 ---
 
 ## ✨ Features
